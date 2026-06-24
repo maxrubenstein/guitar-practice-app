@@ -7,9 +7,31 @@ interface Props {
 }
 
 const MIN_BPM = 40
-const MAX_BPM = 200
+const MAX_BPM = 300
 const LOOKAHEAD_MS = 100
 const SCHEDULE_INTERVAL_MS = 25
+
+// Unlock iOS audio on first user gesture.
+// iOS mutes Web Audio when the silent switch is on unless we route through
+// an HTMLAudioElement that has already started playing. We play a 1-second
+// silent data-URI MP3 on the start button tap — this moves us into the
+// "media playback" category that ignores the silent/ringer switch.
+let iosUnlocked = false
+async function unlockiOS() {
+  if (iosUnlocked) return
+  iosUnlocked = true
+  try {
+    // Minimal silent MP3 (1 frame, 44100 Hz, mono) as a data URI
+    const audio = new Audio(
+      'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU2LjM2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////8AAAAATGF2YzU2LjQxAAAAAAAAAAAAAAAAJAAAAAAAAAAAASDs90hvAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFN//MUZAMAAAGkAAAAAAAAA0gAAAAARTMu//MUZAYAAAGkAAAAAAAAA0gAAAAAOTku//MUZAkAAAGkAAAAAAAAA0gAAAAANVVV'
+    )
+    audio.volume = 0.001
+    await audio.play()
+    audio.pause()
+  } catch {
+    // ignore — best effort
+  }
+}
 
 export default function Metronome({ defaultBpm = 80 }: Props) {
   const [bpm, setBpm] = useState(defaultBpm)
@@ -17,6 +39,11 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
   const [beatsPerMeasure, setBeatsPerMeasure] = useState(4)
   const [accentOn, setAccentOn] = useState(true)
   const [flashBeat, setFlashBeat] = useState<number | null>(null)
+
+  // Editable BPM input
+  const [editingBpm, setEditingBpm] = useState(false)
+  const [bpmDraft, setBpmDraft] = useState(String(defaultBpm))
+  const bpmInputRef = useRef<HTMLInputElement>(null)
 
   const audioCtxRef = useRef<AudioContext | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -27,7 +54,7 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
   const bpmRef = useRef(bpm)
   const beatsRef = useRef(beatsPerMeasure)
   const accentRef = useRef(accentOn)
-  useEffect(() => { bpmRef.current = bpm }, [bpm])
+  useEffect(() => { bpmRef.current = bpm; setBpmDraft(String(bpm)) }, [bpm])
   useEffect(() => { beatsRef.current = beatsPerMeasure }, [beatsPerMeasure])
   useEffect(() => { accentRef.current = accentOn }, [accentOn])
 
@@ -52,7 +79,6 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
     osc.start(time)
     osc.stop(time + 0.08)
 
-    // Visual flash — fire slightly before beat via rAF
     const msUntilBeat = (time - ctx.currentTime) * 1000
     const beat = beatCountRef.current % beatsRef.current
     setTimeout(() => {
@@ -65,7 +91,6 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
     const ctx = getCtx()
     const lookahead = LOOKAHEAD_MS / 1000
     const secondsPerBeat = 60 / bpmRef.current
-
     while (nextBeatTimeRef.current < ctx.currentTime + lookahead) {
       const beat = beatCountRef.current % beatsRef.current
       beep(nextBeatTimeRef.current, accentRef.current && beat === 0)
@@ -74,9 +99,12 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
     }
   }, [getCtx, beep])
 
-  const start = useCallback(async () => {
+  const start = useCallback(() => {
+    // Unlock iOS silent-switch restriction first (synchronous gesture context)
+    unlockiOS()
     const ctx = getCtx()
-    await ctx.resume()
+    // Resume synchronously — do NOT await, stays in user-gesture context for iOS
+    ctx.resume()
     beatCountRef.current = 0
     nextBeatTimeRef.current = ctx.currentTime + 0.05
     intervalRef.current = setInterval(scheduler, SCHEDULE_INTERVAL_MS)
@@ -98,6 +126,20 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
       audioCtxRef.current?.close()
     }
   }, [])
+
+  // BPM editing handlers
+  const commitBpm = useCallback(() => {
+    const val = parseInt(bpmDraft, 10)
+    if (!isNaN(val)) setBpm(Math.min(MAX_BPM, Math.max(MIN_BPM, val)))
+    else setBpmDraft(String(bpm))
+    setEditingBpm(false)
+  }, [bpmDraft, bpm])
+
+  const openBpmEdit = useCallback(() => {
+    setBpmDraft(String(bpm))
+    setEditingBpm(true)
+    setTimeout(() => bpmInputRef.current?.select(), 0)
+  }, [bpm])
 
   const dots = Array.from({ length: beatsPerMeasure }, (_, i) => i)
 
@@ -130,9 +172,28 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
               onClick={() => setBpm(b => Math.max(MIN_BPM, b - 5))}
               className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-bold"
             >−</button>
-            <span className="w-12 text-center font-mono text-lg font-bold text-gray-100">
-              {bpm}
-            </span>
+
+            {editingBpm ? (
+              <input
+                ref={bpmInputRef}
+                type="number"
+                inputMode="numeric"
+                value={bpmDraft}
+                onChange={e => setBpmDraft(e.target.value)}
+                onBlur={commitBpm}
+                onKeyDown={e => { if (e.key === 'Enter') commitBpm(); if (e.key === 'Escape') { setBpmDraft(String(bpm)); setEditingBpm(false) } }}
+                className="w-16 text-center font-mono text-lg font-bold bg-gray-700 border border-indigo-500 rounded text-gray-100 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+            ) : (
+              <button
+                onClick={openBpmEdit}
+                title="Tap to type BPM"
+                className="w-16 text-center font-mono text-lg font-bold text-gray-100 hover:text-indigo-300 hover:bg-gray-700 rounded px-1 transition-colors"
+              >
+                {bpm}
+              </button>
+            )}
+
             <button
               onClick={() => setBpm(b => Math.min(MAX_BPM, b + 5))}
               className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-bold"
