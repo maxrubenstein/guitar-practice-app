@@ -11,15 +11,36 @@ const MAX_BPM = 300
 const LOOKAHEAD_MS = 100
 const SCHEDULE_INTERVAL_MS = 25
 
-// Pre-generate a click sound as an AudioBuffer.
-// AudioBufferSourceNode is more reliable on iOS than OscillatorNode.
+// ── iOS silent-switch workaround ────────────────────────────────────────────
+// iOS mutes Web Audio API when the ringer switch is off. Playing a real (even
+// nearly-inaudible) audio file through HTMLAudioElement switches the iOS audio
+// session to "Playback" mode, which ignores the silent switch — the same
+// category used by music and podcast apps.
+function buildSessionKeeperUrl(): string {
+  const sr = 8000
+  const n = sr // 1 second of 440 Hz sine at volume ~0.3%
+  const buf = new ArrayBuffer(44 + n * 2)
+  const v = new DataView(buf)
+  const s = (o: number, t: string) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)))
+  s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVE')
+  s(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true)
+  v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true)
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true)
+  s(36, 'data'); v.setUint32(40, n * 2, true)
+  for (let i = 0; i < n; i++) {
+    // 440 Hz sine wave at amplitude 100/32767 ≈ 0.3% — effectively inaudible
+    v.setInt16(44 + i * 2, Math.round(Math.sin(2 * Math.PI * 440 * i / sr) * 100), true)
+  }
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
+}
+
+// ── Click sound generation ───────────────────────────────────────────────────
 function makeClickBuffer(ctx: AudioContext, freq: number, amp: number): AudioBuffer {
   const len = Math.floor(ctx.sampleRate * 0.08)
   const buf = ctx.createBuffer(1, len, ctx.sampleRate)
   const data = buf.getChannelData(0)
   for (let i = 0; i < len; i++) {
     const t = i / ctx.sampleRate
-    // Short exponentially-decaying sine burst
     data[i] = amp * Math.sin(2 * Math.PI * freq * t) * Math.exp(-t * 60)
   }
   return buf
@@ -48,8 +69,10 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const nextBeatTimeRef = useRef(0)
   const beatCountRef = useRef(0)
+  const sessionAudioRef = useRef<HTMLAudioElement | null>(null)
+  const sessionUrlRef = useRef<string | null>(null)
 
-  // Always-fresh refs — avoid stale closures inside setInterval
+  // Always-fresh refs to avoid stale closures in setInterval
   const bpmRef = useRef(bpm)
   const beatsRef = useRef(beatsPerMeasure)
   const accentRef = useRef(accentOn)
@@ -75,28 +98,32 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
     while (nextBeatTimeRef.current < ctx.currentTime + lookahead) {
       const beat = beatCountRef.current % beatsRef.current
       const isAccent = accentRef.current && beat === 0
-      const buf = isAccent ? accentBufRef.current! : beatBufRef.current!
-      playClick(ctx, buf, nextBeatTimeRef.current)
-
-      // Visual flash
+      playClick(ctx, isAccent ? accentBufRef.current! : beatBufRef.current!, nextBeatTimeRef.current)
       const delay = Math.max(0, (nextBeatTimeRef.current - ctx.currentTime) * 1000 - 10)
       const b = beat
-      setTimeout(() => {
-        setFlashBeat(b)
-        setTimeout(() => setFlashBeat(null), 80)
-      }, delay)
-
+      setTimeout(() => { setFlashBeat(b); setTimeout(() => setFlashBeat(null), 80) }, delay)
       nextBeatTimeRef.current += spb
       beatCountRef.current++
     }
   }, [])
 
   const start = useCallback(() => {
+    // 1. Start the session keeper audio element — this switches iOS audio
+    //    session to Playback mode, bypassing the silent/ringer switch.
+    if (!sessionAudioRef.current) {
+      const url = buildSessionKeeperUrl()
+      sessionUrlRef.current = url
+      const a = new Audio(url)
+      a.loop = true
+      a.volume = 0.001 // ~0.1% volume — inaudible but present
+      sessionAudioRef.current = a
+    }
+    sessionAudioRef.current.play().catch(() => {})
+
+    // 2. Start Web Audio
     const ctx = getCtx()
-    // Call resume() synchronously — required for iOS user-gesture unlock
     ctx.resume().then(() => {
       beatCountRef.current = 0
-      // Give the context 150ms to fully start before the first beat
       nextBeatTimeRef.current = ctx.currentTime + 0.15
       intervalRef.current = setInterval(scheduler, SCHEDULE_INTERVAL_MS)
       setIsPlaying(true)
@@ -105,13 +132,16 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
 
   const stop = useCallback(() => {
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
+    sessionAudioRef.current?.pause()
     setIsPlaying(false)
     setFlashBeat(null)
   }, [])
 
   useEffect(() => () => {
     if (intervalRef.current) clearInterval(intervalRef.current)
+    sessionAudioRef.current?.pause()
     audioCtxRef.current?.close()
+    if (sessionUrlRef.current) URL.revokeObjectURL(sessionUrlRef.current)
   }, [])
 
   // BPM editing
@@ -197,17 +227,12 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
         </label>
       </div>
 
-      {/* Play / Stop */}
       <button onClick={isPlaying ? stop : start}
         className={`w-full py-2.5 rounded-lg font-semibold text-sm transition-colors ${
           isPlaying ? 'bg-red-700 hover:bg-red-600 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'
         }`}>
         {isPlaying ? '⏹ Stop' : '▶ Start'}
       </button>
-
-      <p className="text-xs text-gray-600 text-center">
-        iPhone: turn ringer switch ON or use headphones
-      </p>
     </div>
   )
 }
