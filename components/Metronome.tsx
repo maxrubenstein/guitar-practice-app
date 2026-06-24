@@ -16,107 +16,82 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [beatsPerMeasure, setBeatsPerMeasure] = useState(4)
   const [accentOn, setAccentOn] = useState(true)
-  const [currentBeat, setCurrentBeat] = useState(0) // 0-indexed, for visual pulse
+  const [flashBeat, setFlashBeat] = useState<number | null>(null)
 
   const audioCtxRef = useRef<AudioContext | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const nextBeatTimeRef = useRef(0)
-  const beatCountRef = useRef(0) // tracks which beat in the measure (0-indexed)
-  const scheduledBeatsRef = useRef<number[]>([]) // AudioContext times of upcoming beats
+  const beatCountRef = useRef(0)
 
-  const getAudioCtx = useCallback(() => {
+  // Always-fresh refs so the setInterval closure never goes stale
+  const bpmRef = useRef(bpm)
+  const beatsRef = useRef(beatsPerMeasure)
+  const accentRef = useRef(accentOn)
+  useEffect(() => { bpmRef.current = bpm }, [bpm])
+  useEffect(() => { beatsRef.current = beatsPerMeasure }, [beatsPerMeasure])
+  useEffect(() => { accentRef.current = accentOn }, [accentOn])
+
+  const getCtx = useCallback((): AudioContext => {
     if (!audioCtxRef.current) {
       audioCtxRef.current = new AudioContext()
     }
     return audioCtxRef.current
   }, [])
 
-  const scheduleBeat = useCallback((time: number, isAccent: boolean) => {
-    const ctx = getAudioCtx()
+  const beep = useCallback((time: number, isAccent: boolean) => {
+    const ctx = getCtx()
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
-
     osc.connect(gain)
     gain.connect(ctx.destination)
-
-    osc.frequency.value = isAccent ? 1000 : 800
+    osc.frequency.value = isAccent ? 1050 : 820
     osc.type = 'sine'
-
     gain.gain.setValueAtTime(0.001, time)
-    gain.gain.exponentialRampToValueAtTime(0.4, time + 0.005)
-    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05)
-
+    gain.gain.exponentialRampToValueAtTime(isAccent ? 0.5 : 0.3, time + 0.004)
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.06)
     osc.start(time)
-    osc.stop(time + 0.06)
+    osc.stop(time + 0.08)
 
-    scheduledBeatsRef.current.push(time)
-    osc.onended = () => {
-      scheduledBeatsRef.current = scheduledBeatsRef.current.filter(t => t !== time)
-    }
-  }, [getAudioCtx])
+    // Visual flash — fire slightly before beat via rAF
+    const msUntilBeat = (time - ctx.currentTime) * 1000
+    const beat = beatCountRef.current % beatsRef.current
+    setTimeout(() => {
+      setFlashBeat(beat)
+      setTimeout(() => setFlashBeat(null), 80)
+    }, Math.max(0, msUntilBeat - 10))
+  }, [getCtx])
 
   const scheduler = useCallback(() => {
-    const ctx = getAudioCtx()
-    const secondsPerBeat = 60 / bpm
+    const ctx = getCtx()
     const lookahead = LOOKAHEAD_MS / 1000
+    const secondsPerBeat = 60 / bpmRef.current
 
     while (nextBeatTimeRef.current < ctx.currentTime + lookahead) {
-      const beat = beatCountRef.current % beatsPerMeasure
-      const isAccent = accentOn && beat === 0
-      scheduleBeat(nextBeatTimeRef.current, isAccent)
+      const beat = beatCountRef.current % beatsRef.current
+      beep(nextBeatTimeRef.current, accentRef.current && beat === 0)
       nextBeatTimeRef.current += secondsPerBeat
       beatCountRef.current++
     }
-  }, [bpm, beatsPerMeasure, accentOn, scheduleBeat, getAudioCtx])
-
-  // Visual pulse via rAF
-  useEffect(() => {
-    if (!isPlaying) return
-    let rafId: number
-
-    const tick = () => {
-      const ctx = audioCtxRef.current
-      if (ctx) {
-        const now = ctx.currentTime
-        // Find the most recently passed scheduled beat
-        const past = scheduledBeatsRef.current.filter(t => t <= now + 0.01)
-        if (past.length > 0) {
-          const beat = beatCountRef.current % beatsPerMeasure
-          setCurrentBeat(beat)
-        }
-      }
-      rafId = requestAnimationFrame(tick)
-    }
-
-    rafId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafId)
-  }, [isPlaying, beatsPerMeasure])
+  }, [getCtx, beep])
 
   const start = useCallback(async () => {
-    const ctx = getAudioCtx()
-    if (ctx.state === 'suspended') await ctx.resume()
+    const ctx = getCtx()
+    await ctx.resume()
     beatCountRef.current = 0
     nextBeatTimeRef.current = ctx.currentTime + 0.05
     intervalRef.current = setInterval(scheduler, SCHEDULE_INTERVAL_MS)
     setIsPlaying(true)
-  }, [getAudioCtx, scheduler])
+  }, [getCtx, scheduler])
 
   const stop = useCallback(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current)
-    intervalRef.current = null
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
     setIsPlaying(false)
-    setCurrentBeat(0)
-    scheduledBeatsRef.current = []
+    setFlashBeat(null)
   }, [])
 
-  // Restart scheduler when bpm/beats change while playing
-  useEffect(() => {
-    if (!isPlaying) return
-    if (intervalRef.current) clearInterval(intervalRef.current)
-    intervalRef.current = setInterval(scheduler, SCHEDULE_INTERVAL_MS)
-  }, [isPlaying, scheduler])
-
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
@@ -135,10 +110,10 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
             <div
               key={i}
               className={`w-3 h-3 rounded-full transition-all duration-75 ${
-                isPlaying && currentBeat % beatsPerMeasure === i
+                flashBeat === i
                   ? i === 0
-                    ? 'bg-indigo-400 scale-125'
-                    : 'bg-green-400 scale-110'
+                    ? 'bg-indigo-300 scale-150'
+                    : 'bg-green-400 scale-125'
                   : 'bg-gray-600'
               }`}
             />
@@ -192,7 +167,6 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
             </button>
           ))}
         </div>
-
         <label className="flex items-center gap-1.5 text-sm text-gray-400 cursor-pointer ml-auto">
           <input
             type="checkbox"
