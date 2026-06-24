@@ -11,30 +11,6 @@ const MAX_BPM = 300
 const LOOKAHEAD_MS = 100
 const SCHEDULE_INTERVAL_MS = 25
 
-// ── iOS silent-switch workaround ────────────────────────────────────────────
-// iOS mutes Web Audio API when the ringer switch is off. Playing a real (even
-// nearly-inaudible) audio file through HTMLAudioElement switches the iOS audio
-// session to "Playback" mode, which ignores the silent switch — the same
-// category used by music and podcast apps.
-function buildSessionKeeperUrl(): string {
-  const sr = 8000
-  const n = sr // 1 second of 440 Hz sine at volume ~0.3%
-  const buf = new ArrayBuffer(44 + n * 2)
-  const v = new DataView(buf)
-  const s = (o: number, t: string) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)))
-  s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVE')
-  s(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true)
-  v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true)
-  v.setUint16(32, 2, true); v.setUint16(34, 16, true)
-  s(36, 'data'); v.setUint32(40, n * 2, true)
-  for (let i = 0; i < n; i++) {
-    // 440 Hz sine wave at amplitude 100/32767 ≈ 0.3% — effectively inaudible
-    v.setInt16(44 + i * 2, Math.round(Math.sin(2 * Math.PI * 440 * i / sr) * 100), true)
-  }
-  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
-}
-
-// ── Click sound generation ───────────────────────────────────────────────────
 function makeClickBuffer(ctx: AudioContext, freq: number, amp: number): AudioBuffer {
   const len = Math.floor(ctx.sampleRate * 0.08)
   const buf = ctx.createBuffer(1, len, ctx.sampleRate)
@@ -69,10 +45,7 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const nextBeatTimeRef = useRef(0)
   const beatCountRef = useRef(0)
-  const sessionAudioRef = useRef<HTMLAudioElement | null>(null)
-  const sessionUrlRef = useRef<string | null>(null)
 
-  // Always-fresh refs to avoid stale closures in setInterval
   const bpmRef = useRef(bpm)
   const beatsRef = useRef(beatsPerMeasure)
   const accentRef = useRef(accentOn)
@@ -108,19 +81,6 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
   }, [])
 
   const start = useCallback(() => {
-    // 1. Start the session keeper audio element — this switches iOS audio
-    //    session to Playback mode, bypassing the silent/ringer switch.
-    if (!sessionAudioRef.current) {
-      const url = buildSessionKeeperUrl()
-      sessionUrlRef.current = url
-      const a = new Audio(url)
-      a.loop = true
-      a.volume = 0.001 // ~0.1% volume — inaudible but present
-      sessionAudioRef.current = a
-    }
-    sessionAudioRef.current.play().catch(() => {})
-
-    // 2. Start Web Audio
     const ctx = getCtx()
     ctx.resume().then(() => {
       beatCountRef.current = 0
@@ -132,19 +92,15 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
 
   const stop = useCallback(() => {
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
-    sessionAudioRef.current?.pause()
     setIsPlaying(false)
     setFlashBeat(null)
   }, [])
 
   useEffect(() => () => {
     if (intervalRef.current) clearInterval(intervalRef.current)
-    sessionAudioRef.current?.pause()
     audioCtxRef.current?.close()
-    if (sessionUrlRef.current) URL.revokeObjectURL(sessionUrlRef.current)
   }, [])
 
-  // BPM editing
   const commitBpm = useCallback(() => {
     const val = parseInt(bpmDraft, 10)
     if (!isNaN(val)) setBpm(Math.min(MAX_BPM, Math.max(MIN_BPM, val)))
@@ -175,7 +131,6 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
         </div>
       </div>
 
-      {/* BPM */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-400">BPM</span>
@@ -210,7 +165,6 @@ export default function Metronome({ defaultBpm = 80 }: Props) {
           className="w-full accent-indigo-500" />
       </div>
 
-      {/* Controls row */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2 text-sm text-gray-400">
           <span>Beats</span>

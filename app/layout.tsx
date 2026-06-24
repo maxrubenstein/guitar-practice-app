@@ -15,7 +15,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Guitar Practice",
   description: "Daily guitar scale and fingering practice — 8-week curriculum",
-  icons: { icon: "/icon.svg" },
 };
 
 export default function RootLayout({
