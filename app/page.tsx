@@ -59,7 +59,12 @@ export default async function DashboardPage() {
           <section className="space-y-3">
             <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">Today's Lesson</h2>
             <div className="rounded-xl border border-indigo-500 bg-indigo-950 p-5 space-y-3">
-              <p className="text-xs text-gray-400">Week {currentLesson.week}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-gray-400">Week {currentLesson.week}</p>
+                {currentLesson.lesson_type === 'review' && (
+                  <span className="text-xs bg-amber-900 text-amber-300 px-1.5 py-0.5 rounded font-mono">↩ Review</span>
+                )}
+              </div>
               <h3 className="text-xl font-bold">{currentLesson.title}</h3>
               <p className="text-sm text-gray-300">{currentLesson.focus}</p>
               <div className="flex gap-4 text-xs text-gray-400">

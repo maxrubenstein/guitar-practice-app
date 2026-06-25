@@ -19,12 +19,14 @@ export interface Lesson {
   id: string
   week: number
   day_order: number
+  lesson_type: 'new' | 'review'
   title: string
   focus: string
   instructions: string
   default_bpm: number
   target_bpm: number
   suggested_minutes: number
+  reviews_lesson_ids: string[]
   created_at: string
 }
 

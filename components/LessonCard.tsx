@@ -33,7 +33,12 @@ export default function LessonCard({ lesson, progress, isCurrent }: Props) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs text-gray-500 mb-0.5">Week {lesson.week}</p>
+          <div className="flex items-center gap-2 mb-0.5">
+            <p className="text-xs text-gray-500">Week {lesson.week}</p>
+            {lesson.lesson_type === 'review' && (
+              <span className="text-xs bg-amber-900 text-amber-300 px-1.5 py-0 rounded font-mono">↩ Review</span>
+            )}
+          </div>
           <h3 className="font-semibold text-gray-100 truncate">{lesson.title}</h3>
           <p className="text-sm text-gray-400 mt-0.5 truncate">{lesson.focus}</p>
         </div>
