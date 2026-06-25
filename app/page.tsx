@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabaseClient'
 import LessonCard from '@/components/LessonCard'
 import StreakDisplay from '@/components/StreakDisplay'
 import RecentDaysStrip from '@/components/RecentDaysStrip'
+import FreeSessionLogger from '@/components/FreeSessionLogger'
 
 export const revalidate = 0
 
@@ -97,6 +98,9 @@ export default async function DashboardPage() {
             </section>
           )
         })()}
+
+        {/* Free practice — not tied to a lesson */}
+        <FreeSessionLogger />
       </main>
     </div>
   )
