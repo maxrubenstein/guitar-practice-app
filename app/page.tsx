@@ -3,6 +3,7 @@ import { getAllLessons, getAllProgress, getCurrentLesson, computeStreak } from '
 import { supabase } from '@/lib/supabaseClient'
 import LessonCard from '@/components/LessonCard'
 import StreakDisplay from '@/components/StreakDisplay'
+import RecentDaysStrip from '@/components/RecentDaysStrip'
 
 export const revalidate = 0
 
@@ -13,20 +14,36 @@ export default async function DashboardPage() {
 
   const { data: sessions } = await supabase
     .from('practice_sessions')
-    .select('duration_seconds, practiced_at')
+    .select('lesson_id, duration_seconds, practiced_at')
     .order('practiced_at', { ascending: false })
-    .limit(60)
+    .limit(100)
 
   const totalMinutes = Math.round(
     (sessions ?? []).reduce((sum, s) => sum + s.duration_seconds, 0) / 60
   )
 
   const progressById = Object.fromEntries(allProgress.map(p => [p.lesson_id, p]))
+  const lessonById = Object.fromEntries(lessons.map(l => [l.id, l]))
 
-  // Recent history: last 7 unique days
-  const recentDays = [...new Set(
-    (sessions ?? []).map(s => new Date(s.practiced_at).toISOString().slice(0, 10))
-  )].slice(0, 7)
+  // Build day groups for the recent strip (last 7 unique days)
+  const dayMap = new Map<string, { lesson_id: string; lesson_title: string; duration_seconds: number; practiced_at: string }[]>()
+  for (const s of sessions ?? []) {
+    const day = new Date(s.practiced_at).toISOString().slice(0, 10)
+    if (!dayMap.has(day)) dayMap.set(day, [])
+    dayMap.get(day)!.push({
+      lesson_id: s.lesson_id,
+      lesson_title: lessonById[s.lesson_id]?.title ?? 'Unknown lesson',
+      duration_seconds: s.duration_seconds,
+      practiced_at: s.practiced_at,
+    })
+  }
+  const recentDayGroups = [...dayMap.entries()]
+    .slice(0, 7)
+    .map(([date, daySessions]) => ({
+      date,
+      label: new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      sessions: daySessions,
+    }))
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
@@ -43,16 +60,7 @@ export default async function DashboardPage() {
         <StreakDisplay streak={streak} totalMinutes={totalMinutes} />
 
         {/* Recent days strip */}
-        {recentDays.length > 0 && (
-          <div className="flex gap-1.5 items-center">
-            <span className="text-xs text-gray-500 mr-1">Recent:</span>
-            {recentDays.map(day => (
-              <span key={day} className="text-xs bg-indigo-800 text-indigo-300 px-2 py-0.5 rounded">
-                {new Date(day + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-              </span>
-            ))}
-          </div>
-        )}
+        <RecentDaysStrip days={recentDayGroups} />
 
         {/* Today's lesson */}
         {currentLesson ? (
