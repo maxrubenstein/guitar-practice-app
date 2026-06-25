@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { getAllLessons, getAllProgress, getCurrentLesson, computeStreak } from '@/lib/curriculum'
+import { getAllLessons, getAllProgress, getCurrentLesson } from '@/lib/curriculum'
 import { supabase } from '@/lib/supabaseClient'
 import LessonCard from '@/components/LessonCard'
 import StreakDisplay from '@/components/StreakDisplay'
@@ -10,7 +10,6 @@ export const revalidate = 0
 export default async function DashboardPage() {
   const [lessons, allProgress] = await Promise.all([getAllLessons(), getAllProgress()])
   const currentLesson = await getCurrentLesson(lessons, allProgress)
-  const streak = await computeStreak()
 
   const { data: sessions } = await supabase
     .from('practice_sessions')
@@ -25,25 +24,14 @@ export default async function DashboardPage() {
   const progressById = Object.fromEntries(allProgress.map(p => [p.lesson_id, p]))
   const lessonById = Object.fromEntries(lessons.map(l => [l.id, l]))
 
-  // Build day groups for the recent strip (last 7 unique days)
-  const dayMap = new Map<string, { lesson_id: string; lesson_title: string; duration_seconds: number; practiced_at: string }[]>()
-  for (const s of sessions ?? []) {
-    const day = new Date(s.practiced_at).toISOString().slice(0, 10)
-    if (!dayMap.has(day)) dayMap.set(day, [])
-    dayMap.get(day)!.push({
-      lesson_id: s.lesson_id,
-      lesson_title: lessonById[s.lesson_id]?.title ?? 'Unknown lesson',
-      duration_seconds: s.duration_seconds,
-      practiced_at: s.practiced_at,
-    })
-  }
-  const recentDayGroups = [...dayMap.entries()]
-    .slice(0, 7)
-    .map(([date, daySessions]) => ({
-      date,
-      label: new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      sessions: daySessions,
-    }))
+  // Pass raw sessions to client — date grouping happens in the browser so
+  // local timezone is used instead of the server's UTC.
+  const recentSessions = (sessions ?? []).slice(0, 100).map(s => ({
+    lesson_id: s.lesson_id,
+    lesson_title: lessonById[s.lesson_id]?.title ?? 'Unknown lesson',
+    duration_seconds: s.duration_seconds,
+    practiced_at: s.practiced_at,
+  }))
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
@@ -56,11 +44,14 @@ export default async function DashboardPage() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-8 space-y-8">
-        {/* Stats */}
-        <StreakDisplay streak={streak} totalMinutes={totalMinutes} />
+        {/* Stats — StreakDisplay computes streak client-side for correct local timezone */}
+        <StreakDisplay
+          practicedAtTimestamps={recentSessions.map(s => s.practiced_at)}
+          totalMinutes={totalMinutes}
+        />
 
         {/* Recent days strip */}
-        <RecentDaysStrip days={recentDayGroups} />
+        <RecentDaysStrip sessions={recentSessions} />
 
         {/* Today's lesson */}
         {currentLesson ? (

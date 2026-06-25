@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
 
 interface SessionEntry {
@@ -10,14 +10,14 @@ interface SessionEntry {
   practiced_at: string
 }
 
-interface DayGroup {
-  date: string           // YYYY-MM-DD
-  label: string          // "Jun 24"
+interface Props {
   sessions: SessionEntry[]
 }
 
-interface Props {
-  days: DayGroup[]
+function localDateKey(isoString: string): string {
+  // Group by the user's local calendar date, not UTC
+  const d = new Date(isoString)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function formatDuration(seconds: number): string {
@@ -25,36 +25,53 @@ function formatDuration(seconds: number): string {
   return `${Math.round(seconds / 60)}m`
 }
 
-export default function RecentDaysStrip({ days }: Props) {
+function dayLabel(dateKey: string): string {
+  // dateKey is YYYY-MM-DD in local time — parse as local noon to avoid DST edge cases
+  return new Date(dateKey + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+export default function RecentDaysStrip({ sessions }: Props) {
   const [openDay, setOpenDay] = useState<string | null>(null)
+
+  const days = useMemo(() => {
+    const map = new Map<string, SessionEntry[]>()
+    for (const s of sessions) {
+      const key = localDateKey(s.practiced_at)
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(s)
+    }
+    return [...map.entries()].slice(0, 7).map(([date, daySessions]) => ({ date, daySessions }))
+  }, [sessions])
 
   if (days.length === 0) return null
 
-  const expanded = openDay ? days.find(d => d.date === openDay) : null
+  const expanded = days.find(d => d.date === openDay)
 
   return (
     <div className="space-y-2">
       <div className="flex gap-1.5 items-center flex-wrap">
         <span className="text-xs text-gray-500 mr-1">Recent:</span>
-        {days.map(day => (
+        {days.map(({ date }) => (
           <button
-            key={day.date}
-            onClick={() => setOpenDay(openDay === day.date ? null : day.date)}
+            key={date}
+            onClick={() => setOpenDay(openDay === date ? null : date)}
             className={`text-xs px-2 py-0.5 rounded transition-colors ${
-              openDay === day.date
+              openDay === date
                 ? 'bg-indigo-600 text-white'
                 : 'bg-indigo-800 text-indigo-300 hover:bg-indigo-700'
             }`}
           >
-            {day.label}
+            {dayLabel(date)}
           </button>
         ))}
       </div>
 
       {expanded && (
-        <div className="rounded-lg bg-gray-800 border border-gray-700 p-3 space-y-2">
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">{expanded.label}</p>
-          {expanded.sessions.map((s, i) => (
+        <div className="rounded-lg bg-gray-800 border border-gray-700 p-3 space-y-1">
+          <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
+            {dayLabel(expanded.date)}
+          </p>
+          {expanded.daySessions.map((s, i) => (
             <Link
               key={i}
               href={`/practice/${s.lesson_id}`}

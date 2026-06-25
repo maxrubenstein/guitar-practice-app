@@ -1,9 +1,20 @@
+'use client'
+
+import { useMemo } from 'react'
+import { computeStreakFromTimestamps } from '@/lib/curriculum'
+
 interface Props {
-  streak: number
+  practicedAtTimestamps: string[]
   totalMinutes: number
 }
 
-export default function StreakDisplay({ streak, totalMinutes }: Props) {
+export default function StreakDisplay({ practicedAtTimestamps, totalMinutes }: Props) {
+  // Computed in the browser so local timezone is used for day boundaries
+  const streak = useMemo(
+    () => computeStreakFromTimestamps(practicedAtTimestamps),
+    [practicedAtTimestamps]
+  )
+
   return (
     <div className="flex gap-4">
       <div className="rounded-lg bg-gray-800 px-5 py-3 text-center">

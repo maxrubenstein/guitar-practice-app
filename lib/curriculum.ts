@@ -98,16 +98,33 @@ export async function getCurrentLesson(lessons: Lesson[], allProgress: Progress[
   return lessons.find(l => !masteredIds.has(l.id)) ?? lessons[0] ?? null
 }
 
-export async function computeStreak(): Promise<number> {
+// Returns raw practiced_at timestamps so the client can compute streak
+// in the correct local timezone.
+export async function getPracticedAtTimestamps(): Promise<string[]> {
   const { data } = await supabase
     .from('practice_sessions')
     .select('practiced_at')
     .order('practiced_at', { ascending: false })
+  return (data ?? []).map(s => s.practiced_at)
+}
 
-  if (!data || data.length === 0) return 0
+// Server-side streak (UTC dates only — used as a fallback).
+// For accurate local-timezone streak, use the client-side helper below.
+export async function computeStreak(): Promise<number> {
+  const timestamps = await getPracticedAtTimestamps()
+  return computeStreakFromTimestamps(timestamps)
+}
+
+// Pure function — call this client-side with the raw timestamps so
+// new Date() uses the browser's local timezone.
+export function computeStreakFromTimestamps(timestamps: string[]): number {
+  if (timestamps.length === 0) return 0
 
   const days = new Set(
-    data.map(s => new Date(s.practiced_at).toISOString().slice(0, 10))
+    timestamps.map(ts => {
+      const d = new Date(ts)
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    })
   )
 
   let streak = 0
@@ -115,7 +132,7 @@ export async function computeStreak(): Promise<number> {
   for (let i = 0; i < 365; i++) {
     const d = new Date(today)
     d.setDate(d.getDate() - i)
-    const key = d.toISOString().slice(0, 10)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     if (days.has(key)) {
       streak++
     } else if (i > 0) {
