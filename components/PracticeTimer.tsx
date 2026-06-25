@@ -18,6 +18,7 @@ export default function PracticeTimer({ onSessionComplete, currentBpm }: Props) 
   const [running, setRunning] = useState(false)
   const [showLog, setShowLog] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [logBpm, setLogBpm] = useState<string>('')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const start = useCallback(() => {
@@ -32,6 +33,7 @@ export default function PracticeTimer({ onSessionComplete, currentBpm }: Props) 
     setRunning(false)
     setElapsed(0)
     setShowLog(false)
+    setLogBpm('')
   }, [])
 
   useEffect(() => {
@@ -47,16 +49,18 @@ export default function PracticeTimer({ onSessionComplete, currentBpm }: Props) 
 
   const handleFinish = useCallback(() => {
     pause()
+    setLogBpm(currentBpm ? String(currentBpm) : '')
     setShowLog(true)
-  }, [pause])
+  }, [pause, currentBpm])
 
   const handleLog = useCallback(async () => {
     if (elapsed === 0) return
     setSaving(true)
-    await onSessionComplete(elapsed, currentBpm ?? null)
+    const bpmVal = logBpm.trim() ? parseInt(logBpm, 10) : null
+    await onSessionComplete(elapsed, isNaN(bpmVal!) ? null : bpmVal)
     setSaving(false)
     reset()
-  }, [elapsed, currentBpm, onSessionComplete, reset])
+  }, [elapsed, logBpm, onSessionComplete, reset])
 
   return (
     <div className="rounded-lg bg-gray-800 p-5 space-y-4">
@@ -102,10 +106,18 @@ export default function PracticeTimer({ onSessionComplete, currentBpm }: Props) 
         </div>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-gray-400">
-            Log this session? ({formatTime(elapsed)}
-            {currentBpm ? ` at ${currentBpm} BPM` : ''})
-          </p>
+          <p className="text-sm text-gray-400">Log this session? ({formatTime(elapsed)})</p>
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-400 shrink-0">BPM practiced</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={logBpm}
+              onChange={e => setLogBpm(e.target.value)}
+              placeholder="—"
+              className="w-20 rounded bg-gray-700 border border-gray-600 text-gray-100 px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+          </div>
           <div className="flex gap-2">
             <button
               onClick={handleLog}
