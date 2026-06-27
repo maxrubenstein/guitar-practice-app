@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import Metronome from '@/components/Metronome'
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60).toString().padStart(2, '0')
@@ -74,6 +75,9 @@ export default function FreeSessionLogger() {
           <p className="text-xs text-gray-500">
             Learning a song, jamming, or anything outside the curriculum — log it here.
           </p>
+
+          {/* Metronome */}
+          <Metronome />
 
           {/* Timer */}
           <div className="text-4xl font-mono font-bold text-center text-gray-100 tracking-widest py-1">
